@@ -5,6 +5,13 @@ import PackageDescription
 
 let package = Package(
     name: "TrueMetalShader",
+    // SwiftUI 的 Shader / ShaderLibrary / layerEffect 需要以下系统版本。
+    platforms: [
+        .iOS(.v17),
+        .macOS(.v14),
+        .tvOS(.v17),
+        .visionOS(.v1),
+    ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -14,9 +21,13 @@ let package = Package(
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
+        // 目录下的 .metal 会被 SwiftPM 自动编译进本 target 的资源包(default.metallib)，
+        // 因此可通过 ShaderLibrary.bundle(.module) 访问。
         .target(
-            name: "TrueMetalShader"
+            name: "TrueMetalShader",
+            resources: [
+                .process("Effects/Metaball/Metaball.metal")
+            ]
         ),
 
     ],
