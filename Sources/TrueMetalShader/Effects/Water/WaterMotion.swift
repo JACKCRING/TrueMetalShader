@@ -119,16 +119,22 @@ public struct WaterGravityEffect: ViewModifier {
     public var refractionStrength: CGFloat
     public var tint: Color
     public var foam: Color
-    public var foamWidth: CGFloat
+    public var turbulenceWidth: CGFloat
+    public var bodyOpacity: Double
+    public var highlightIntensity: Float
+    public var causticIntensity: Float
 
     public init(level: CGFloat = 0.5,
-                waveAmplitude: CGFloat = 4,
+                waveAmplitude: CGFloat = 10,
                 waveFrequency: Float = 10,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 6,
-                tint: Color = Color(red: 0.15, green: 0.55, blue: 0.85).opacity(0.35),
-                foam: Color = .white.opacity(0.85),
-                foamWidth: CGFloat = 2,
+                refractionStrength: CGFloat = 10,
+                tint: Color = Color(red: 0.02, green: 0.30, blue: 0.45),
+                foam: Color = Color(red: 0.55, green: 0.85, blue: 0.95),
+                turbulenceWidth: CGFloat = 26,
+                bodyOpacity: Double = 0.85,
+                highlightIntensity: Float = 0.30,
+                causticIntensity: Float = 0.35,
                 stiffness: CGFloat = 90,
                 damping: CGFloat = 9) {
         self.level = level
@@ -138,7 +144,10 @@ public struct WaterGravityEffect: ViewModifier {
         self.refractionStrength = refractionStrength
         self.tint = tint
         self.foam = foam
-        self.foamWidth = foamWidth
+        self.turbulenceWidth = turbulenceWidth
+        self.bodyOpacity = bodyOpacity
+        self.highlightIntensity = highlightIntensity
+        self.causticIntensity = causticIntensity
         _source = StateObject(wrappedValue: WaterGravitySource(stiffness: stiffness, damping: damping))
     }
 
@@ -152,7 +161,10 @@ public struct WaterGravityEffect: ViewModifier {
                         refractionStrength: refractionStrength,
                         tint: tint,
                         foam: foam,
-                        foamWidth: foamWidth)
+                        turbulenceWidth: turbulenceWidth,
+                        bodyOpacity: bodyOpacity,
+                        highlightIntensity: highlightIntensity,
+                        causticIntensity: causticIntensity)
             .onAppear { source.start() }
             .onDisappear { source.stop() }
     }
@@ -167,23 +179,29 @@ public extension View {
     ///
     /// - Parameters:
     ///   - level: 水位 0...1，0 = 空杯，1 = 满杯。默认 0.5。
-    ///   - waveAmplitude: 水面波浪幅度（像素）。默认 4。
+    ///   - waveAmplitude: 水面起伏幅度（像素）。默认 10。
     ///   - waveFrequency: 波浪密度。默认 10。
-    ///   - waveSpeed: 波浪流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度。默认 6。
-    ///   - tint: 水色（alpha 控制浓度）。默认半透明蓝。
-    ///   - foam: 水位线高光 / 泡沫色。默认半透明白。
-    ///   - foamWidth: 泡沫细线宽度（像素）。默认 2。
+    ///   - waveSpeed: 波浪 / 花纹流动速度。默认 1.0。
+    ///   - refractionStrength: 折射强度。默认 10。
+    ///   - tint: 水色（深处颜色）。默认深青蓝。
+    ///   - foam: 表层花纹亮色 / 焦散偏色。默认浅青。
+    ///   - turbulenceWidth: 表层紊乱花纹带宽度（像素）。默认 26。
+    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.85。
+    ///   - highlightIntensity: 波面高光强度。默认 0.30。
+    ///   - causticIntensity: 焦散光束强度，0 关闭。默认 0.35。
     ///   - stiffness: 晃动弹簧刚度，越大追赶越快。默认 90。
     ///   - damping: 晃动弹簧阻尼，越小越晃、越大越快稳定。默认 9。
     func waterGravityEffect(level: CGFloat = 0.5,
-                            waveAmplitude: CGFloat = 4,
+                            waveAmplitude: CGFloat = 10,
                             waveFrequency: Float = 10,
                             waveSpeed: Float = 1.0,
-                            refractionStrength: CGFloat = 6,
-                            tint: Color = Color(red: 0.15, green: 0.55, blue: 0.85).opacity(0.35),
-                            foam: Color = .white.opacity(0.85),
-                            foamWidth: CGFloat = 2,
+                            refractionStrength: CGFloat = 10,
+                            tint: Color = Color(red: 0.02, green: 0.30, blue: 0.45),
+                            foam: Color = Color(red: 0.55, green: 0.85, blue: 0.95),
+                            turbulenceWidth: CGFloat = 26,
+                            bodyOpacity: Double = 0.85,
+                            highlightIntensity: Float = 0.30,
+                            causticIntensity: Float = 0.35,
                             stiffness: CGFloat = 90,
                             damping: CGFloat = 9) -> some View {
         modifier(WaterGravityEffect(level: level,
@@ -193,7 +211,10 @@ public extension View {
                                     refractionStrength: refractionStrength,
                                     tint: tint,
                                     foam: foam,
-                                    foamWidth: foamWidth,
+                                    turbulenceWidth: turbulenceWidth,
+                                    bodyOpacity: bodyOpacity,
+                                    highlightIntensity: highlightIntensity,
+                                    causticIntensity: causticIntensity,
                                     stiffness: stiffness,
                                     damping: damping))
     }
