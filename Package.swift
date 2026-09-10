@@ -26,7 +26,12 @@ let package = Package(
         .target(
             name: "TrueMetalShader",
             resources: [
-                .process("Effects/Metaball/Metaball.metal")
+                .process("Effects/Metaball/Metaball.metal"),
+                .process("Effects/PaperBurn/PaperBurn.metal"),
+                .process("Effects/Particle/Particle.metal"),
+                .process("Effects/RainbowDisplacement/RainbowDisplacement.metal"),
+                .process("Effects/RainbowRipple/RainbowRipple.metal"),
+                .process("Effects/Water/Water.metal"),
             ]
         ),
 

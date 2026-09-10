@@ -18,6 +18,15 @@
 //  已包含的效果：
 //  - Metaball（融球 / gooey）：`.metaballEffect(radius:threshold:softness:)`
 //                              或容器 `MetaballContainer { ... }`
+//  - RainbowDisplacement（彩虹置换 / 色散）：`.rainbowDisplacementEffect(...)`
+//                              波纹置换 + RGB 通道错位，作用于任意视图
+//  - RainbowRipple（彩虹水波纹）：`.rainbowRippleEffect(...)`
+//                              点击任意位置，从该点扩散一圈圈彩虹色水波
+//  - Water（水面 / 透明容器水切面）：`.waterEffect(gravity:level:...)`
+//                              水位线随重力倾斜、随时间起伏，水下折射 + 加深
+//                              水色，交界处一条高光线；仅 iOS 还有
+//                              `.waterGravityEffect(...)`，接 CoreMotion
+//                              重力 + 弹簧晃动，端起手机就能晃水
 //
 //  ------------------------------------------------------------
 //  扩展新效果（约定）：
