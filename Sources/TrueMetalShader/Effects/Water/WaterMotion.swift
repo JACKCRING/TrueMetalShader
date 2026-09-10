@@ -18,7 +18,7 @@
 //      Image("photo")
 //          .waterGravityEffect(level: 0.6)     // 端起手机试试左右倾斜
 //
-//  想要更细的控制（自己的水色、波浪参数等），把 `WaterGravitySource`
+//  想要更细的控制（自己的水色、起伏参数等），把 `WaterGravitySource`
 //  的 `gravity` 接到 `.waterEffect(gravity:...)` 上即可，两者可以自由
 //  组合。
 //
@@ -118,23 +118,21 @@ public struct WaterGravityEffect: ViewModifier {
     public var waveSpeed: Float
     public var refractionStrength: CGFloat
     public var tint: Color
-    public var foam: Color
-    public var turbulenceWidth: CGFloat
+    public var highlightColor: Color
+    public var softness: CGFloat
     public var bodyOpacity: Double
     public var highlightIntensity: Float
-    public var causticIntensity: Float
 
     public init(level: CGFloat = 0.5,
-                waveAmplitude: CGFloat = 10,
-                waveFrequency: Float = 10,
+                waveAmplitude: CGFloat = 3,
+                waveFrequency: Float = 4,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 10,
-                tint: Color = Color(red: 0.02, green: 0.30, blue: 0.45),
-                foam: Color = Color(red: 0.55, green: 0.85, blue: 0.95),
-                turbulenceWidth: CGFloat = 26,
-                bodyOpacity: Double = 0.85,
-                highlightIntensity: Float = 0.30,
-                causticIntensity: Float = 0.35,
+                refractionStrength: CGFloat = 4,
+                tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
+                highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
+                softness: CGFloat = 6,
+                bodyOpacity: Double = 0.75,
+                highlightIntensity: Float = 0.35,
                 stiffness: CGFloat = 90,
                 damping: CGFloat = 9) {
         self.level = level
@@ -143,11 +141,10 @@ public struct WaterGravityEffect: ViewModifier {
         self.waveSpeed = waveSpeed
         self.refractionStrength = refractionStrength
         self.tint = tint
-        self.foam = foam
-        self.turbulenceWidth = turbulenceWidth
+        self.highlightColor = highlightColor
+        self.softness = softness
         self.bodyOpacity = bodyOpacity
         self.highlightIntensity = highlightIntensity
-        self.causticIntensity = causticIntensity
         _source = StateObject(wrappedValue: WaterGravitySource(stiffness: stiffness, damping: damping))
     }
 
@@ -160,11 +157,10 @@ public struct WaterGravityEffect: ViewModifier {
                         waveSpeed: waveSpeed,
                         refractionStrength: refractionStrength,
                         tint: tint,
-                        foam: foam,
-                        turbulenceWidth: turbulenceWidth,
+                        highlightColor: highlightColor,
+                        softness: softness,
                         bodyOpacity: bodyOpacity,
-                        highlightIntensity: highlightIntensity,
-                        causticIntensity: causticIntensity)
+                        highlightIntensity: highlightIntensity)
             .onAppear { source.start() }
             .onDisappear { source.stop() }
     }
@@ -179,29 +175,27 @@ public extension View {
     ///
     /// - Parameters:
     ///   - level: 水位 0...1，0 = 空杯，1 = 满杯。默认 0.5。
-    ///   - waveAmplitude: 水面起伏幅度（像素）。默认 10。
-    ///   - waveFrequency: 波浪密度。默认 10。
-    ///   - waveSpeed: 波浪 / 花纹流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度。默认 10。
-    ///   - tint: 水色（深处颜色）。默认深青蓝。
-    ///   - foam: 表层花纹亮色 / 焦散偏色。默认浅青。
-    ///   - turbulenceWidth: 表层紊乱花纹带宽度（像素）。默认 26。
-    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.85。
-    ///   - highlightIntensity: 波面高光强度。默认 0.30。
-    ///   - causticIntensity: 焦散光束强度，0 关闭。默认 0.35。
+    ///   - waveAmplitude: 水面起伏幅度（像素），保持较小。默认 3。
+    ///   - waveFrequency: 起伏密度。默认 4。
+    ///   - waveSpeed: 起伏 / 高光流动速度。默认 1.0。
+    ///   - refractionStrength: 折射强度，保持较小。默认 4。
+    ///   - tint: 水色。默认深青蓝。
+    ///   - highlightColor: 表面渐变高光颜色。默认浅青白。
+    ///   - softness: 水/空气边界柔和过渡宽度（像素）。默认 6。
+    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.75。
+    ///   - highlightIntensity: 表面渐变高光强度。默认 0.35。
     ///   - stiffness: 晃动弹簧刚度，越大追赶越快。默认 90。
     ///   - damping: 晃动弹簧阻尼，越小越晃、越大越快稳定。默认 9。
     func waterGravityEffect(level: CGFloat = 0.5,
-                            waveAmplitude: CGFloat = 10,
-                            waveFrequency: Float = 10,
+                            waveAmplitude: CGFloat = 3,
+                            waveFrequency: Float = 4,
                             waveSpeed: Float = 1.0,
-                            refractionStrength: CGFloat = 10,
-                            tint: Color = Color(red: 0.02, green: 0.30, blue: 0.45),
-                            foam: Color = Color(red: 0.55, green: 0.85, blue: 0.95),
-                            turbulenceWidth: CGFloat = 26,
-                            bodyOpacity: Double = 0.85,
-                            highlightIntensity: Float = 0.30,
-                            causticIntensity: Float = 0.35,
+                            refractionStrength: CGFloat = 4,
+                            tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
+                            highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
+                            softness: CGFloat = 6,
+                            bodyOpacity: Double = 0.75,
+                            highlightIntensity: Float = 0.35,
                             stiffness: CGFloat = 90,
                             damping: CGFloat = 9) -> some View {
         modifier(WaterGravityEffect(level: level,
@@ -210,11 +204,10 @@ public extension View {
                                     waveSpeed: waveSpeed,
                                     refractionStrength: refractionStrength,
                                     tint: tint,
-                                    foam: foam,
-                                    turbulenceWidth: turbulenceWidth,
+                                    highlightColor: highlightColor,
+                                    softness: softness,
                                     bodyOpacity: bodyOpacity,
                                     highlightIntensity: highlightIntensity,
-                                    causticIntensity: causticIntensity,
                                     stiffness: stiffness,
                                     damping: damping))
     }
