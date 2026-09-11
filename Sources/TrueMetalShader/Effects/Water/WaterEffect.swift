@@ -6,9 +6,11 @@
 //  ------------------------------------------------------------
 //  参考真实“手机端着一杯水”的观感来做：水面几乎是一条平滑的倾斜直线
 //  （随重力倾斜），只有很轻微的低频起伏，边缘是柔和模糊的过渡（不是
-//  锐利描边），水面附近有一层淡淡的渐变高光，水下用很轻微的噪声扭曲
-//  做折射。刻意不做夸张的波浪 / 高频花纹——那样会显得像连绵的山峰，
-//  不像真实水面。
+//  锐利描边），水面附近有一层淡淡的渐变高光。折射 + 色散只在贴近水面
+//  的一段距离内明显，越往深处越平淡（`refractionRange` 控制这段距离）——
+//  这更符合真实水下光学：贴着水面能看清被扭曲、带彩边的画面，深一点
+//  基本就看不透了。刻意不做夸张的波浪 / 高频花纹——那样会显得像连绵的
+//  山峰，不像真实水面。
 //
 //  套在【任意视图】上即可，那个视图就是“容器”：
 //
@@ -55,9 +57,17 @@ public struct WaterEffect: ViewModifier {
     /// 起伏 / 高光流动速度。
     public var waveSpeed: Float
 
-    /// 折射强度：水面坡度 + 轻微噪声 → 采样偏移的换算系数。保持较小，
-    /// 折射应该是隐约的，不是强烈扭曲。
+    /// 折射强度（贴近水面处的最大值）：水面坡度 + 轻微噪声 → 采样偏移的
+    /// 换算系数。保持较小，折射应该是隐约的，不是强烈扭曲。
     public var refractionStrength: CGFloat
+
+    /// 折射 + 色散强度随深度衰减的范围（像素）：离水面这个距离内强度从
+    /// 满值衰减到接近 0。越大，能看清折射画面的“透光层”越厚。
+    public var refractionRange: CGFloat
+
+    /// 色散（chromatic aberration）强度 0...1：R/G/B 通道采样位移量的
+    /// 差异幅度，越大水面附近的彩边越明显。同样随深度衰减。
+    public var chromaSpread: Float
 
     /// 水色（水下叠加的颜色）。
     public var tint: Color
@@ -84,11 +94,13 @@ public struct WaterEffect: ViewModifier {
                 waveAmplitude: CGFloat = 3,
                 waveFrequency: Float = 4,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 4,
+                refractionStrength: CGFloat = 22,
+                refractionRange: CGFloat = 60,
+                chromaSpread: Float = 0.6,
                 tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                 highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
                 softness: CGFloat = 6,
-                bodyOpacity: Double = 0.75,
+                bodyOpacity: Double = 0.7,
                 highlightIntensity: Float = 0.35,
                 isAnimating: Bool = true) {
         self.gravity = gravity
@@ -97,6 +109,8 @@ public struct WaterEffect: ViewModifier {
         self.waveFrequency = waveFrequency
         self.waveSpeed = waveSpeed
         self.refractionStrength = refractionStrength
+        self.refractionRange = refractionRange
+        self.chromaSpread = chromaSpread
         self.tint = tint
         self.highlightColor = highlightColor
         self.softness = softness
@@ -105,12 +119,12 @@ public struct WaterEffect: ViewModifier {
         self.isAnimating = isAnimating
     }
 
-    /// 折射最远采样距离：轻微噪声扭曲 + 边界坡度的粗略上界，两者都乘以
-    /// refractionStrength，再加上 softness 留出的柔化边余量。
+    /// 折射最远采样距离：噪声扭曲 + 边界坡度的粗略上界，乘以色散展开的
+    /// 最大倍数（1 + chromaSpread），再加上 softness 留出的柔化边余量。
     private var maxSampleOffset: CGSize {
         let warpReach = 0.6 * refractionStrength
         let slopeReach = waveAmplitude * CGFloat(waveFrequency) * 0.01 * refractionStrength
-        let reach = warpReach + slopeReach + softness + CGFloat(4)
+        let reach = (warpReach + slopeReach) * CGFloat(1 + max(0, chromaSpread)) + softness + CGFloat(4)
         return CGSize(width: reach, height: reach)
     }
 
@@ -137,7 +151,9 @@ public struct WaterEffect: ViewModifier {
                         .color(highlightColor),
                         .float(Float(softness)),
                         .float(Float(bodyOpacity)),
-                        .float(highlightIntensity)
+                        .float(highlightIntensity),
+                        .float(chromaSpread),
+                        .float(Float(refractionRange))
                     ),
                     maxSampleOffset: maxSampleOffset
                 )
@@ -151,9 +167,10 @@ public struct WaterEffect: ViewModifier {
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
 public extension View {
     /// 给任意视图套上“透明容器里的水”效果：水位线随重力倾斜（近乎平滑
-    /// 直线），只有很轻微的低频起伏，边缘柔和模糊过渡，水下轻微折射 +
-    /// 一层淡淡的渐变高光。水的不透明度独立于容器本身透明度，因此即便
-    /// 容器画得很淡，水依然清晰可见。
+    /// 直线），只有很轻微的低频起伏，边缘柔和模糊过渡；折射 + 色散只在
+    /// 贴近水面的一段距离内明显（越往深处越平淡，`refractionRange` 控制
+    /// 这段距离），并叠加一层淡淡的渐变高光。水的不透明度独立于容器本身
+    /// 透明度，因此即便容器画得很淡，水依然清晰可见。
     ///
     /// - Parameters:
     ///   - gravity: 重力 / “下”方向，(0,1) 为竖直向下（水面持平）。默认 (0, 1)。
@@ -161,11 +178,13 @@ public extension View {
     ///   - waveAmplitude: 水面起伏幅度（像素），保持较小。默认 3。
     ///   - waveFrequency: 起伏密度。默认 4。
     ///   - waveSpeed: 起伏 / 高光流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度，保持较小、隐约即可。默认 4。
+    ///   - refractionStrength: 折射强度（贴近水面处的最大值）。默认 22。
+    ///   - refractionRange: 折射 + 色散强度衰减到接近 0 的距离（像素）。默认 60。
+    ///   - chromaSpread: 色散强度 0...1，越大彩边越明显。默认 0.6。
     ///   - tint: 水色。默认深青蓝。
     ///   - highlightColor: 表面渐变高光颜色。默认浅青白。
     ///   - softness: 水/空气边界柔和过渡宽度（像素），越大越模糊。默认 6。
-    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.75。
+    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.7。
     ///   - highlightIntensity: 表面渐变高光强度。默认 0.35。
     ///   - isAnimating: 是否自动起伏流动。默认 true。
     func waterEffect(gravity: CGVector = CGVector(dx: 0, dy: 1),
@@ -173,11 +192,13 @@ public extension View {
                      waveAmplitude: CGFloat = 3,
                      waveFrequency: Float = 4,
                      waveSpeed: Float = 1.0,
-                     refractionStrength: CGFloat = 4,
+                     refractionStrength: CGFloat = 22,
+                     refractionRange: CGFloat = 60,
+                     chromaSpread: Float = 0.6,
                      tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                      highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
                      softness: CGFloat = 6,
-                     bodyOpacity: Double = 0.75,
+                     bodyOpacity: Double = 0.7,
                      highlightIntensity: Float = 0.35,
                      isAnimating: Bool = true) -> some View {
         modifier(WaterEffect(gravity: gravity,
@@ -186,6 +207,8 @@ public extension View {
                               waveFrequency: waveFrequency,
                               waveSpeed: waveSpeed,
                               refractionStrength: refractionStrength,
+                              refractionRange: refractionRange,
+                              chromaSpread: chromaSpread,
                               tint: tint,
                               highlightColor: highlightColor,
                               softness: softness,
@@ -195,42 +218,79 @@ public extension View {
     }
 }
 
+// MARK: - 预览辅助
+
+/// 一个有明显纹理的网格背景（类似瓷砖），专门用来让折射/色散效果“看得出来”——
+/// 纯色背景被扭曲后还是纯色，肉眼分辨不出位移，必须要有规则纹理做参照物。
+@available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
+private struct TiledPreviewBackground: View {
+    var body: some View {
+        Canvas { context, size in
+            let step: CGFloat = 24
+            context.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .color(Color(red: 0.10, green: 0.55, blue: 0.60)))
+            var x: CGFloat = 0
+            while x <= size.width {
+                context.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) },
+                               with: .color(.black.opacity(0.6)), lineWidth: 1.5)
+                x += step
+            }
+            var y: CGFloat = 0
+            while y <= size.height {
+                context.stroke(Path { $0.move(to: CGPoint(x: 0, y: y)); $0.addLine(to: CGPoint(x: size.width, y: y)) },
+                               with: .color(.black.opacity(0.6)), lineWidth: 1.5)
+                y += step
+            }
+        }
+    }
+}
+
 // MARK: - 预览
 
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
-#Preview("水面 · 玻璃杯半杯水") {
-    RoundedRectangle(cornerRadius: 20)
-        .fill(.white.opacity(0.05))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(.white.opacity(0.4), lineWidth: 2)
-        )
+#Preview("水面 · 折射瓷砖背景（能明显看出扭曲/色散）") {
+    TiledPreviewBackground()
+        .frame(width: 320, height: 420)
+        .waterEffect(gravity: CGVector(dx: 0.3, dy: 1), level: 0.7)
+        .background(.black)
+}
+
+@available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
+#Preview("水面 · 玻璃杯半杯水（瓷砖背景）") {
+    TiledPreviewBackground()
         .frame(width: 160, height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.4), lineWidth: 2))
         .waterEffect(level: 0.5)
         .padding(60)
         .background(.black)
 }
 
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
-#Preview("水面 · 倾斜晃动") {
-    ZStack {
-        Text("💧")
-            .font(.system(size: 80))
-    }
-    .frame(width: 200, height: 260)
-    .background(.white.opacity(0.05))
-    .clipShape(RoundedRectangle(cornerRadius: 24))
-    .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.3), lineWidth: 2))
-    .waterEffect(gravity: CGVector(dx: 0.5, dy: 0.85), level: 0.6)
-    .padding(60)
-    .background(.black)
+#Preview("水面 · 倾斜晃动（瓷砖背景）") {
+    TiledPreviewBackground()
+        .frame(width: 200, height: 260)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.3), lineWidth: 2))
+        .waterEffect(gravity: CGVector(dx: 0.5, dy: 0.85), level: 0.6)
+        .padding(60)
+        .background(.black)
 }
 
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
-#Preview("水面 · 满屏水位卡片") {
-    RoundedRectangle(cornerRadius: 28)
-        .fill(Color(red: 0.05, green: 0.4, blue: 0.55))
-        .frame(width: 320, height: 420)
-        .waterEffect(gravity: CGVector(dx: 0.35, dy: 1), level: 0.75, softness: 10)
-        .background(.black)
+#Preview("水面 · 文字下层被折射") {
+    ZStack {
+        TiledPreviewBackground()
+        Text("TrueMetalShader")
+            .font(.system(size: 26, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+    }
+    .frame(width: 320, height: 420)
+    .waterEffect(gravity: CGVector(dx: 0.35, dy: 1),
+                level: 0.75,
+                refractionStrength: 26,
+                refractionRange: 70,
+                chromaSpread: 0.7,
+                softness: 10)
+    .background(.black)
 }

@@ -117,6 +117,8 @@ public struct WaterGravityEffect: ViewModifier {
     public var waveFrequency: Float
     public var waveSpeed: Float
     public var refractionStrength: CGFloat
+    public var refractionRange: CGFloat
+    public var chromaSpread: Float
     public var tint: Color
     public var highlightColor: Color
     public var softness: CGFloat
@@ -127,11 +129,13 @@ public struct WaterGravityEffect: ViewModifier {
                 waveAmplitude: CGFloat = 3,
                 waveFrequency: Float = 4,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 4,
+                refractionStrength: CGFloat = 22,
+                refractionRange: CGFloat = 60,
+                chromaSpread: Float = 0.6,
                 tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                 highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
                 softness: CGFloat = 6,
-                bodyOpacity: Double = 0.75,
+                bodyOpacity: Double = 0.7,
                 highlightIntensity: Float = 0.35,
                 stiffness: CGFloat = 90,
                 damping: CGFloat = 9) {
@@ -140,6 +144,8 @@ public struct WaterGravityEffect: ViewModifier {
         self.waveFrequency = waveFrequency
         self.waveSpeed = waveSpeed
         self.refractionStrength = refractionStrength
+        self.refractionRange = refractionRange
+        self.chromaSpread = chromaSpread
         self.tint = tint
         self.highlightColor = highlightColor
         self.softness = softness
@@ -156,6 +162,8 @@ public struct WaterGravityEffect: ViewModifier {
                         waveFrequency: waveFrequency,
                         waveSpeed: waveSpeed,
                         refractionStrength: refractionStrength,
+                        refractionRange: refractionRange,
+                        chromaSpread: chromaSpread,
                         tint: tint,
                         highlightColor: highlightColor,
                         softness: softness,
@@ -178,11 +186,13 @@ public extension View {
     ///   - waveAmplitude: 水面起伏幅度（像素），保持较小。默认 3。
     ///   - waveFrequency: 起伏密度。默认 4。
     ///   - waveSpeed: 起伏 / 高光流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度，保持较小。默认 4。
+    ///   - refractionStrength: 折射强度（贴近水面处的最大值）。默认 22。
+    ///   - refractionRange: 折射 + 色散强度衰减到接近 0 的距离（像素）。默认 60。
+    ///   - chromaSpread: 色散强度 0...1，越大彩边越明显。默认 0.6。
     ///   - tint: 水色。默认深青蓝。
     ///   - highlightColor: 表面渐变高光颜色。默认浅青白。
     ///   - softness: 水/空气边界柔和过渡宽度（像素）。默认 6。
-    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.75。
+    ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.7。
     ///   - highlightIntensity: 表面渐变高光强度。默认 0.35。
     ///   - stiffness: 晃动弹簧刚度，越大追赶越快。默认 90。
     ///   - damping: 晃动弹簧阻尼，越小越晃、越大越快稳定。默认 9。
@@ -190,11 +200,13 @@ public extension View {
                             waveAmplitude: CGFloat = 3,
                             waveFrequency: Float = 4,
                             waveSpeed: Float = 1.0,
-                            refractionStrength: CGFloat = 4,
+                            refractionStrength: CGFloat = 22,
+                            refractionRange: CGFloat = 60,
+                            chromaSpread: Float = 0.6,
                             tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                             highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
                             softness: CGFloat = 6,
-                            bodyOpacity: Double = 0.75,
+                            bodyOpacity: Double = 0.7,
                             highlightIntensity: Float = 0.35,
                             stiffness: CGFloat = 90,
                             damping: CGFloat = 9) -> some View {
@@ -203,6 +215,8 @@ public extension View {
                                     waveFrequency: waveFrequency,
                                     waveSpeed: waveSpeed,
                                     refractionStrength: refractionStrength,
+                                    refractionRange: refractionRange,
+                                    chromaSpread: chromaSpread,
                                     tint: tint,
                                     highlightColor: highlightColor,
                                     softness: softness,

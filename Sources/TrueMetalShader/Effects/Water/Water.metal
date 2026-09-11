@@ -13,7 +13,13 @@
 //    更不能是高频噪声——那样会变成锯齿山峰，不是水面）；
 //  - 边界用较宽的 smoothstep 做柔和过渡（`softness` 控制），呈现雾化
 //    玻璃后面看水的那种模糊感，而不是刀切般的锐利线；
-//  - 水下用很轻微的噪声域扭曲做折射，强度远小于之前版本；
+//  - 水下用很轻微的噪声域扭曲做折射，强度远小于之前版本；折射 + 色散
+//    的强度都随离水面的距离指数衰减（`refractionRange` 控制衰减范围）——
+//    贴近水面能看清被水面扭曲、带彩边的画面，深一点就只剩平淡的水色，
+//    这也更符合真实水光学（越深越难透光看清上方内容）；
+//  - 色散：R/G/B 通道用略有差异的位移量采样（`chromaSpread` 控制强度），
+//    强度同样随深度衰减，只在贴近水面处出现彩边，模拟光线穿过水面时
+//    因波长不同而略微分离的效果；
 //  - 水面附近一条淡淡的渐变高光带，模拟表面反光；
 //  - 水的不透明度独立于容器原始透明度（`bodyOpacity`），因此即便容器
 //    本身画得很淡（近乎透明的玻璃轮廓），水依然清晰可见。
@@ -80,7 +86,9 @@ static inline float tms_waterHeight(float tCoord,
                                half4 highlightColor,
                                float softness,
                                float bodyOpacity,
-                               float highlightIntensity) {
+                               float highlightIntensity,
+                               float chromaSpread,
+                               float refractionRange) {
     // 重力方向（“下”），退化时兜底为正下方，避免除零。
     float2 g = length(gravity) > 0.0001 ? normalize(gravity) : float2(0.0, 1.0);
     // 切向：与重力垂直，水位线沿这个方向延展。
@@ -120,9 +128,13 @@ static inline float tms_waterHeight(float tCoord,
     float2 flowP = position * 0.006 + float2(time * 0.05, -time * 0.03);
     float n1 = tms_noise(flowP) - 0.5;
     float n2 = tms_noise(flowP + float2(5.2, 1.3)) - 0.5;
-    float2 warp = float2(n1, n2) * 0.6;
+    float2 warp = float2(n1, n2) * 3.0;
 
-    float2 disp = (t * slope * 0.5 + warp) * refractionStrength;
+    // 折射/色散强度随离水面距离指数衰减：贴近水面（depth 小）时接近 1，
+    // 越往深处越接近 0——只有靠近水面才能看清被扭曲、带彩边的画面，
+    // 深处基本看不透，这也是真实水下光学的样子。
+    float nearSurface = exp(-max(depth, 0.0) / max(refractionRange, 1.0));
+    float2 disp = (t * slope * 0.5 + warp) * refractionStrength * nearSurface;
 
     // --- 原始图层采样：既判断“容器形状”，也用作空气侧内容 ---
     half4 airSample = layer.sample(position);
@@ -133,12 +145,21 @@ static inline float tms_waterHeight(float tCoord,
     float shapeAA = fwidth(float(airSample.a)) + 0.0006;
     float shapeMask = smoothstep(0.0002 - shapeAA, 0.0002 + shapeAA, float(airSample.a));
 
-    // --- 水侧：轻微扭曲后的折射采样 ---
-    half4 waterSample = layer.sample(position + disp);
-    half3 waterStraight = waterSample.a > 0.001h ? half3(waterSample.rgb / waterSample.a) : half3(0.0h);
+    // --- 水侧：轻微扭曲后的折射采样，R/G/B 用略有差异的位移量分别采样
+    //     做色散（chromatic aberration），色散幅度也随 nearSurface 衰减，
+    //     只在贴近水面处出现彩边。 ---
+    float chroma = chromaSpread * nearSurface;
+    half4 sr = layer.sample(position + disp * (1.0 + chroma));
+    half4 sg = layer.sample(position + disp);
+    half4 sb = layer.sample(position + disp * (1.0 - chroma));
+    half3 waterStraight;
+    waterStraight.r = sr.a > 0.001h ? half(sr.r / sr.a) : 0.0h;
+    waterStraight.g = sg.a > 0.001h ? half(sg.g / sg.a) : 0.0h;
+    waterStraight.b = sb.a > 0.001h ? half(sb.b / sb.a) : 0.0h;
 
-    // 水色：越深叠得越浓 + 略微吸光变暗，但始终透一点被折射的内容。
-    half tintMix = half(saturate(0.55 + depthFrac * 0.35));
+    // 水色：贴近水面时只叠很淡的一层（这样被折射/色散的下层内容清晰
+    // 可见），随深度增加逐渐叠浓，够深处基本被水色盖住看不透。
+    half tintMix = half(saturate(0.12 + depthFrac * 0.75));
     half3 body = mix(waterStraight, tintColor.rgb, tintMix);
     body *= half(1.0 - depthFrac * 0.20);
 
