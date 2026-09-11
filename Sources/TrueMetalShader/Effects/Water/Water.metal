@@ -187,3 +187,94 @@ static inline float tms_waterHeight(float tCoord,
     result = clamp(result, 0.0h, 1.0h);
     return half4(result * a, a);
 }
+
+// ============================================================
+// tms_waterLens —— “液态水镜片” / Liquid Glass 风格的悬浮水滴透镜。
+// ------------------------------------------------------------
+// 与上面的 tms_water（模拟容器里的一整片水）不同，这个函数模拟一枚
+// 浮在内容上方的水滴/水泡：整块区域都是“凸起的液体表面”（半球形高度
+// 场），中心几乎不偏移、只有很轻的镜头感缩放，边缘因为液面坡度最大，
+// 折射 + 色散最强烈——这正是真实水滴透镜（以及 Liquid Glass 风格 UI）
+// 的光学特征。
+//
+// 用法：配合 Swift 侧的“把 content 渲染两次”技巧（见 WaterLensEffect.
+// swift），第二份 content 铺满整个背景、按镜片位置反向偏移对齐、裁到
+// 镜片大小后套上这个着色器，再裁成镜片形状浮在上层——这样镜片挪到哪，
+// 就“看透”背景哪一块，效果上就是能扭曲/色散【下层任意内容】的悬浮水镜。
+//
+// 命名同样遵循 tms_ 前缀约定。
+// ============================================================
+
+[[stitchable]] half4 tms_waterLens(float2 position,
+                                   SwiftUI::Layer layer,
+                                   float time,
+                                   float2 lensCenter,
+                                   float2 lensRadius,
+                                   float refractionStrength,
+                                   float chromaSpread,
+                                   half4 tintColor,
+                                   half4 highlightColor,
+                                   float highlightIntensity,
+                                   float rippleAmplitude,
+                                   float rippleSpeed) {
+    // lensCenter / lensRadius 是“镜片”在这个图层坐标系里的位置与半径
+    // （不是整个图层的中心/尺寸）——这样镜片可以浮在容器内任意位置，
+    // Swift 侧只需要把一份与背景等大、位置对齐的图层套上本着色器，
+    // 再用镜片形状裁切出可见范围即可（见 WaterLensEffect.swift）。
+    float2 radius = max(lensRadius, float2(1.0));
+    float2 p = (position - lensCenter) / radius;      // 归一化到椭圆坐标，中心 (0,0)，边缘 ~1
+    float r2 = clamp(dot(p, p), 0.0, 1.0);
+
+    // 半球形液面高度场：中心最高(=1)，边缘最低(=0)，模拟凸起的水滴表面；
+    // 叠一点随时间流动的轻微噪声波纹（rippleAmplitude 控制），让水面
+    // 不是死的镀膜，而是“液态”在轻轻晃。
+    float dome = sqrt(max(0.0, 1.0 - r2));
+    float ripple = (tms_noise(p * 3.0 + time * rippleSpeed * 0.4) - 0.5) * rippleAmplitude;
+    float height = dome + ripple * (1.0 - dome * 0.6);
+
+    // 有限差分求高度场梯度 → 液面坡度，坡度方向即光线被弯折的方向；
+    // 中心坡度≈0（几乎不偏移，只有轻微整体缩放感），边缘坡度最大。
+    const float eps = 0.01;
+    float heightDx = sqrt(max(0.0, 1.0 - clamp(dot(p + float2(eps, 0.0), p + float2(eps, 0.0)), 0.0, 1.0)))
+                    + (tms_noise((p + float2(eps, 0.0)) * 3.0 + time * rippleSpeed * 0.4) - 0.5) * rippleAmplitude;
+    float heightDy = sqrt(max(0.0, 1.0 - clamp(dot(p + float2(0.0, eps), p + float2(0.0, eps)), 0.0, 1.0)))
+                    + (tms_noise((p + float2(0.0, eps)) * 3.0 + time * rippleSpeed * 0.4) - 0.5) * rippleAmplitude;
+    float2 gradient = float2(heightDx - height, heightDy - height) / eps;
+
+    // 折射位移：坡度越大位移越大（边缘强烈弯折，中心几乎不动），换算到
+    // 像素单位时用 radius 把归一化坡度转回实际像素尺度。
+    float2 disp = gradient * radius * refractionStrength;
+
+    // 色散：坡度幅度驱动 R/G/B 的位移差异——液面越陡（越靠边缘）色散
+    // 越明显，这正是水滴透镜边缘常见的彩色描边。
+    float slope = length(gradient);
+    float chroma = chromaSpread * saturate(slope * 2.0);
+    half4 sr = layer.sample(position + disp * (1.0 + chroma));
+    half4 sg = layer.sample(position + disp);
+    half4 sb = layer.sample(position + disp * (1.0 - chroma));
+
+    half3 straight;
+    straight.r = sr.a > 0.001h ? half(sr.r / sr.a) : 0.0h;
+    straight.g = sg.a > 0.001h ? half(sg.g / sg.a) : 0.0h;
+    straight.b = sb.a > 0.001h ? half(sb.b / sb.a) : 0.0h;
+    half a = sg.a;
+
+    // 淡淡的水色叠加，让镜片看起来确实“是水”而不是纯粹的扭曲玻璃。
+    half3 tinted = mix(straight, tintColor.rgb, half(tintColor.a));
+
+    // 边缘高光环 + 顶部一小块柔和亮斑：模拟液面的镜面反光，边缘坡度大
+    // 处（slope 大）叠加一个高光环，顶部（p.y 小、r 小）叠一块顺光高光。
+    float2 lightDir = normalize(float2(-0.35, -0.9));
+    float2 normalXY = slope > 0.0001 ? gradient / slope : float2(0.0);
+    float rim = pow(saturate(slope * 1.6), 2.0) * saturate(1.0 - r2 * 0.3);
+    float sheen = pow(saturate(dot(normalXY, -lightDir) * 0.5 + 0.5), 3.0) * dome;
+    half highlight = half(saturate(rim * 0.8 + sheen * 0.6) * highlightIntensity);
+    half3 result = clamp(tinted + half3(highlight) * half3(highlightColor.rgb), 0.0h, 1.0h);
+
+    // 镜片整体形状由外部 clipShape 负责裁切；这里只在椭圆之外做一点
+    // 柔和收边（避免方形 layer 边角出现未定义的液面）。
+    float edgeMask = smoothstep(1.05, 0.95, sqrt(r2));
+    a = half(saturate(float(a) * mix(0.0, 1.0, edgeMask)));
+
+    return half4(result * a, a);
+}
