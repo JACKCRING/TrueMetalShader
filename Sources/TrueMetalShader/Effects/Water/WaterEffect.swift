@@ -5,12 +5,14 @@
 //  水面（water）效果的公开 API —— 核心、跨平台、无传感器依赖部分。
 //  ------------------------------------------------------------
 //  参考真实“手机端着一杯水”的观感来做：水面几乎是一条平滑的倾斜直线
-//  （随重力倾斜），只有很轻微的低频起伏，边缘是柔和模糊的过渡（不是
-//  锐利描边），水面附近有一层淡淡的渐变高光。折射 + 色散只在贴近水面
-//  的一段距离内明显，越往深处越平淡（`refractionRange` 控制这段距离）——
-//  这更符合真实水下光学：贴着水面能看清被扭曲、带彩边的画面，深一点
-//  基本就看不透了。刻意不做夸张的波浪 / 高频花纹——那样会显得像连绵的
-//  山峰，不像真实水面。
+//  （随重力倾斜），只有很轻微的低频起伏，边缘是锐利的（只做 1px 抗
+//  锯齿，不是模糊的雾面过渡）。折射效果是经典的“插入水里的筷子看起来
+//  断开错位”——跨过水位线后，内容整体沿切向产生一段【恒定】的侧向
+//  位移（`refractionRange` 只控制从 0 过渡到恒定值的窄条宽度），色散
+//  同理。紧贴水位线水下一侧有一条内发光（inner glow），亮度只随离
+//  水位线的距离衰减、与坡度朝向无关，所以整条曲线上的辉光是均匀的。
+//  刻意不做夸张的波浪 / 高频花纹——那样会显得像连绵的山峰，不像真实
+//  水面。
 //
 //  套在【任意视图】上即可，那个视图就是“容器”：
 //
@@ -54,37 +56,58 @@ public struct WaterEffect: ViewModifier {
     /// 起伏密度：越大起伏越密集（仍是低频，不会变成花纹）。
     public var waveFrequency: Float
 
-    /// 起伏 / 高光流动速度。
+    /// 起伏流动速度。
     public var waveSpeed: Float
 
-    /// 折射强度（贴近水面处的最大值）：水面坡度 + 轻微噪声 → 采样偏移的
-    /// 换算系数。保持较小，折射应该是隐约的，不是强烈扭曲。
+    /// 折射强度（像素）：跨过水位线后，内容沿切向整体挪动的【恒定】
+    /// 距离——这是“插入水里的筷子看起来断开错位”那道错位的宽度。
     public var refractionStrength: CGFloat
 
-    /// 折射 + 色散强度随深度衰减的范围（像素）：离水面这个距离内强度从
-    /// 满值衰减到接近 0。越大，能看清折射画面的“透光层”越厚。
+    /// 位移从 0 过渡到恒定值所跨越的窄条宽度（像素），只影响水位线附近
+    /// 那道“阶跃”本身的软硬程度，不影响位移是否随深度继续变化（不会，
+    /// 过渡完之后一直保持恒定）。越小这道错位越像硬边缘，越大越柔和。
     public var refractionRange: CGFloat
 
     /// 色散（chromatic aberration）强度 0...1：R/G/B 通道采样位移量的
-    /// 差异幅度，越大水面附近的彩边越明显。同样随深度衰减。
+    /// 差异幅度。同样是跨过水位线后的恒定值。这个值只影响“基于下层
+    /// 内容位移采样”那部分色散，配合 `chromaSoftness` 做柔化，视觉上
+    /// 应该保持较小（默认 0.15）——真正明显的彩虹光晕来自 `prismGlow*`
+    /// 系列参数（独立叠加，不依赖下层内容）。
     public var chromaSpread: Float
+
+    /// 色散采样的模糊半径（像素）：每个颜色通道额外用小幅抖动的多次
+    /// 采样取平均，把色散从“锐利描边”变成“柔和光晕”，越大越柔和。
+    public var chromaSoftness: CGFloat
+
+    /// 棱镜辉光（prism glow）强度：独立叠加在水位线附近的彩虹光晕，
+    /// 不依赖下层内容的对比度——这是让色散“看起来像色散”而不是“像
+    /// 描边”的主要来源，参考真实棱镜色散的柔光质感。
+    public var prismGlowIntensity: Float
+
+    /// 棱镜辉光的衰减范围（像素）：离水位线这个距离后光晕基本消失，
+    /// 越大光晕带越厚越柔和。
+    public var prismGlowRange: CGFloat
 
     /// 水色（水下叠加的颜色）。
     public var tint: Color
 
-    /// 水面附近渐变高光的颜色。
+    /// 内发光（inner glow）颜色，紧贴水位线水下一侧的那条辉光。
     public var highlightColor: Color
 
-    /// 水/空气边界的柔和过渡宽度（像素）。越大边缘越模糊柔和（雾面玻璃
-    /// 感），越小越接近锐利边缘。
+    /// 水/空气边界的锐利度：只做 1px 抗锯齿的额外柔化余量（像素），
+    /// 保持很小的值（默认 0）以呈现锐利边缘；调大会让边缘变模糊。
     public var softness: CGFloat
 
     /// 水体不透明度 0...1，独立于容器原始透明度。这是让“水看得见”的关键：
     /// 即便容器本身画得很淡（近乎透明的玻璃轮廓），水依然按这个值显示。
     public var bodyOpacity: Double
 
-    /// 表面渐变高光强度。
+    /// 内发光强度：越大辉光越亮越明显。
     public var highlightIntensity: Float
+
+    /// 内发光衰减范围（像素）：离水位线这个距离后辉光基本消失，越大
+    /// 辉光带越厚。
+    public var highlightRange: CGFloat
 
     /// 是否让水面自动起伏流动。关闭后水面完全静止（只由 `gravity` / `level` 决定形状）。
     public var isAnimating: Bool
@@ -94,14 +117,18 @@ public struct WaterEffect: ViewModifier {
                 waveAmplitude: CGFloat = 3,
                 waveFrequency: Float = 4,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 22,
-                refractionRange: CGFloat = 60,
-                chromaSpread: Float = 0.6,
+                refractionStrength: CGFloat = 18,
+                refractionRange: CGFloat = 4,
+                chromaSpread: Float = 0.15,
+                chromaSoftness: CGFloat = 3,
+                prismGlowIntensity: Float = 0.55,
+                prismGlowRange: CGFloat = 16,
                 tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
-                highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
-                softness: CGFloat = 6,
+                highlightColor: Color = .white,
+                softness: CGFloat = 0,
                 bodyOpacity: Double = 0.7,
-                highlightIntensity: Float = 0.35,
+                highlightIntensity: Float = 0.9,
+                highlightRange: CGFloat = 14,
                 isAnimating: Bool = true) {
         self.gravity = gravity
         self.level = level
@@ -111,20 +138,25 @@ public struct WaterEffect: ViewModifier {
         self.refractionStrength = refractionStrength
         self.refractionRange = refractionRange
         self.chromaSpread = chromaSpread
+        self.chromaSoftness = chromaSoftness
+        self.prismGlowIntensity = prismGlowIntensity
+        self.prismGlowRange = prismGlowRange
         self.tint = tint
         self.highlightColor = highlightColor
         self.softness = softness
         self.bodyOpacity = bodyOpacity
         self.highlightIntensity = highlightIntensity
+        self.highlightRange = highlightRange
         self.isAnimating = isAnimating
     }
 
-    /// 折射最远采样距离：噪声扭曲 + 边界坡度的粗略上界，乘以色散展开的
-    /// 最大倍数（1 + chromaSpread），再加上 softness 留出的柔化边余量。
+    /// 折射最远采样距离：恒定位移量 refractionStrength（含 slope 调制
+    /// 最多 ±60%，噪声抖动幅度很小），乘以色散展开的最大倍数
+    /// （1 + chromaSpread），再加上 chromaSoftness 的抖动半径和 softness
+    /// 留出的柔化边余量。
     private var maxSampleOffset: CGSize {
-        let warpReach = 0.6 * refractionStrength
-        let slopeReach = waveAmplitude * CGFloat(waveFrequency) * 0.01 * refractionStrength
-        let reach = (warpReach + slopeReach) * CGFloat(1 + max(0, chromaSpread)) + softness + CGFloat(4)
+        let reach = refractionStrength * 1.6 * CGFloat(1 + max(0, chromaSpread))
+                  + chromaSoftness + softness + CGFloat(4)
         return CGSize(width: reach, height: reach)
     }
 
@@ -153,7 +185,11 @@ public struct WaterEffect: ViewModifier {
                         .float(Float(bodyOpacity)),
                         .float(highlightIntensity),
                         .float(chromaSpread),
-                        .float(Float(refractionRange))
+                        .float(Float(refractionRange)),
+                        .float(Float(highlightRange)),
+                        .float(Float(chromaSoftness)),
+                        .float(prismGlowIntensity),
+                        .float(Float(prismGlowRange))
                     ),
                     maxSampleOffset: maxSampleOffset
                 )
@@ -167,39 +203,51 @@ public struct WaterEffect: ViewModifier {
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
 public extension View {
     /// 给任意视图套上“透明容器里的水”效果：水位线随重力倾斜（近乎平滑
-    /// 直线），只有很轻微的低频起伏，边缘柔和模糊过渡；折射 + 色散只在
-    /// 贴近水面的一段距离内明显（越往深处越平淡，`refractionRange` 控制
-    /// 这段距离），并叠加一层淡淡的渐变高光。水的不透明度独立于容器本身
-    /// 透明度，因此即便容器画得很淡，水依然清晰可见。
+    /// 直线），只有很轻微的低频起伏，边缘锐利；跨过水位线后内容整体
+    /// 产生一段恒定的折射侧移 + 色散，紧贴水位线水下一侧有一条均匀的
+    /// 内发光。水的不透明度独立于容器本身透明度，因此即便容器画得很
+    /// 淡，水依然清晰可见。
     ///
     /// - Parameters:
     ///   - gravity: 重力 / “下”方向，(0,1) 为竖直向下（水面持平）。默认 (0, 1)。
     ///   - level: 水位 0...1，0 = 空杯，1 = 满杯。默认 0.5。
     ///   - waveAmplitude: 水面起伏幅度（像素），保持较小。默认 3。
     ///   - waveFrequency: 起伏密度。默认 4。
-    ///   - waveSpeed: 起伏 / 高光流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度（贴近水面处的最大值）。默认 22。
-    ///   - refractionRange: 折射 + 色散强度衰减到接近 0 的距离（像素）。默认 60。
-    ///   - chromaSpread: 色散强度 0...1，越大彩边越明显。默认 0.6。
+    ///   - waveSpeed: 起伏流动速度。默认 1.0。
+    ///   - refractionStrength: 折射强度（像素），跨过水位线后的恒定侧移
+    ///     距离。默认 18。
+    ///   - refractionRange: 位移从 0 过渡到恒定值的窄条宽度（像素），
+    ///     越小这道错位越像硬边缘。默认 4。
+    ///   - chromaSpread: 通道位移色散强度 0...1，保持较小（配合
+    ///     chromaSoftness 柔化）。默认 0.15。
+    ///   - chromaSoftness: 色散采样模糊半径（像素），把色散变柔和。默认 3。
+    ///   - prismGlowIntensity: 棱镜辉光强度（独立于下层内容的彩虹光晕，
+    ///     真正的“色散像色散”的来源）。默认 0.55。
+    ///   - prismGlowRange: 棱镜辉光衰减范围（像素）。默认 16。
     ///   - tint: 水色。默认深青蓝。
-    ///   - highlightColor: 表面渐变高光颜色。默认浅青白。
-    ///   - softness: 水/空气边界柔和过渡宽度（像素），越大越模糊。默认 6。
+    ///   - highlightColor: 内发光颜色。默认白。
+    ///   - softness: 边界额外柔化余量（像素），保持很小以呈现锐利边缘。默认 0。
     ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.7。
-    ///   - highlightIntensity: 表面渐变高光强度。默认 0.35。
+    ///   - highlightIntensity: 内发光强度。默认 0.9。
+    ///   - highlightRange: 内发光衰减范围（像素）。默认 14。
     ///   - isAnimating: 是否自动起伏流动。默认 true。
     func waterEffect(gravity: CGVector = CGVector(dx: 0, dy: 1),
                      level: CGFloat = 0.5,
                      waveAmplitude: CGFloat = 3,
                      waveFrequency: Float = 4,
                      waveSpeed: Float = 1.0,
-                     refractionStrength: CGFloat = 22,
-                     refractionRange: CGFloat = 60,
-                     chromaSpread: Float = 0.6,
+                     refractionStrength: CGFloat = 18,
+                     refractionRange: CGFloat = 4,
+                     chromaSpread: Float = 0.15,
+                     chromaSoftness: CGFloat = 3,
+                     prismGlowIntensity: Float = 0.55,
+                     prismGlowRange: CGFloat = 16,
                      tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
-                     highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
-                     softness: CGFloat = 6,
+                     highlightColor: Color = .white,
+                     softness: CGFloat = 0,
                      bodyOpacity: Double = 0.7,
-                     highlightIntensity: Float = 0.35,
+                     highlightIntensity: Float = 0.9,
+                     highlightRange: CGFloat = 14,
                      isAnimating: Bool = true) -> some View {
         modifier(WaterEffect(gravity: gravity,
                               level: level,
@@ -209,11 +257,15 @@ public extension View {
                               refractionStrength: refractionStrength,
                               refractionRange: refractionRange,
                               chromaSpread: chromaSpread,
+                              chromaSoftness: chromaSoftness,
+                              prismGlowIntensity: prismGlowIntensity,
+                              prismGlowRange: prismGlowRange,
                               tint: tint,
                               highlightColor: highlightColor,
                               softness: softness,
                               bodyOpacity: bodyOpacity,
                               highlightIntensity: highlightIntensity,
+                              highlightRange: highlightRange,
                               isAnimating: isAnimating))
     }
 }
@@ -288,9 +340,33 @@ private struct TiledPreviewBackground: View {
     .frame(width: 320, height: 420)
     .waterEffect(gravity: CGVector(dx: 0.35, dy: 1),
                 level: 0.75,
+                refractionStrength: 24,
+                chromaSpread: 0.6)
+    .background(.black)
+}
+
+@available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
+#Preview("水面 · 插入水中的矩形（错位折射 + 内发光 + 柔和棱镜色散）") {
+    ZStack {
+        Color(red: 0.72, green: 0.85, blue: 0.90)
+        RoundedRectangle(cornerRadius: 4)
+            .fill(.black)
+            .frame(width: 90, height: 160)
+            .offset(y: -60)
+    }
+    .frame(width: 320, height: 400)
+    .waterEffect(gravity: CGVector(dx: 0, dy: 1),
+                level: 0.55,
+                waveAmplitude: 14,
+                waveFrequency: 3,
                 refractionStrength: 26,
-                refractionRange: 70,
-                chromaSpread: 0.7,
-                softness: 10)
+                chromaSpread: 0.1,
+                chromaSoftness: 4,
+                prismGlowIntensity: 0.6,
+                prismGlowRange: 18,
+                tint: Color(red: 0.72, green: 0.90, blue: 0.95).opacity(0.35),
+                bodyOpacity: 0.5,
+                highlightIntensity: 1.0,
+                highlightRange: 16)
     .background(.black)
 }

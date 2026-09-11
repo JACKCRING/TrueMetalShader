@@ -11,16 +11,21 @@
 //
 //  - 水位线角度随重力倾斜，叠加一层极轻微、低频的起伏（不是夸张的波浪，
 //    更不能是高频噪声——那样会变成锯齿山峰，不是水面）；
-//  - 边界用较宽的 smoothstep 做柔和过渡（`softness` 控制），呈现雾化
-//    玻璃后面看水的那种模糊感，而不是刀切般的锐利线；
-//  - 水下用很轻微的噪声域扭曲做折射，强度远小于之前版本；折射 + 色散
-//    的强度都随离水面的距离指数衰减（`refractionRange` 控制衰减范围）——
-//    贴近水面能看清被水面扭曲、带彩边的画面，深一点就只剩平淡的水色，
-//    这也更符合真实水光学（越深越难透光看清上方内容）；
-//  - 色散：R/G/B 通道用略有差异的位移量采样（`chromaSpread` 控制强度），
-//    强度同样随深度衰减，只在贴近水面处出现彩边，模拟光线穿过水面时
-//    因波长不同而略微分离的效果；
-//  - 水面附近一条淡淡的渐变高光带，模拟表面反光；
+//  - 边界是锐利的（只做 1px 抗锯齿，`softness` 只用来做极轻微的柔化，
+//    默认值很小），不是模糊的雾面过渡——水面轮廓应该看得清清楚楚；
+//  - 水下折射是经典的“插入水里的筷子看起来断开错位”效果：跨过水位线
+//    后，内容整体沿一个固定方向产生一段【恒定】的侧向位移（不随深度
+//    衰减），只在贴着水位线的窄条内快速从 0 过渡到满值——视觉上就是
+//    “东西一插进水里，水下的部分整体挪了一截”，而不是越往下越模糊；
+//  - 色散：不是锐利的红蓝描边，而是棱镜色散那种柔和光晕——每个 R/G/B
+//    通道用小幅抖动的多次采样取平均做模糊（避免对下层内容锐利边缘产生
+//    锐利彩边），再叠加一层独立的柔和彩虹辉光（`prismGlow` 系列参数，
+//    纯粹基于离水位线的距离算色相渐变 + 高斯衰减，不依赖下层内容的
+//    对比度），这样才是“发光”而不是“描边”的质感；
+//  - 内发光（inner glow）：紧贴水位线的水下一侧，有一条均匀的辉光带，
+//    强度只随“离水位线的距离”指数衰减（`highlightRange` 控制衰减范围），
+//    与局部法线朝向无关——这样辉光沿整条曲线均匀浮现，不会因为坡度朝向
+//    不同而忽明忽暗；
 //  - 水的不透明度独立于容器原始透明度（`bodyOpacity`），因此即便容器
 //    本身画得很淡（近乎透明的玻璃轮廓），水依然清晰可见。
 //
@@ -58,6 +63,13 @@ static inline float tms_noise(float2 p) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// 便宜的彩虹调色板（余弦渐变，Inigo Quilez 风格）。t 在 0...1 循环一圈
+// 色相，用于水位线附近的柔和棱镜辉光（不是通道位移描边）。
+static inline half3 tms_prismRainbow(float t) {
+    float3 c = 0.5 + 0.5 * cos(6.28318530718 * (float3(0.00, 0.33, 0.67) + t));
+    return half3(c);
+}
+
 // 水位线边界高度场：只负责“轮廓形状”，必须是一条平滑、近乎直的曲线——
 // 单一低频正弦（一整个视图宽度大约看到不到一个完整波峰）+ 极轻微的
 // 低频噪声，两者振幅都很小，避免出现多个尖峰。tCoord 是沿切向的坐标，
@@ -88,7 +100,11 @@ static inline float tms_waterHeight(float tCoord,
                                float bodyOpacity,
                                float highlightIntensity,
                                float chromaSpread,
-                               float refractionRange) {
+                               float refractionRange,
+                               float highlightRange,
+                               float chromaSoftness,
+                               float prismGlowIntensity,
+                               float prismGlowRange) {
     // 重力方向（“下”），退化时兜底为正下方，避免除零。
     float2 g = length(gravity) > 0.0001 ? normalize(gravity) : float2(0.0, 1.0);
     // 切向：与重力垂直，水位线沿这个方向延展。
@@ -117,24 +133,29 @@ static inline float tms_waterHeight(float tCoord,
     float depth = dot(position, g) - boundary;              // >0 = 水里（沿重力轴，像素）
     float depthFrac = saturate(depth / (extent * 0.6));      // 0（刚过水位线）...1（够深）
 
-    // 有限差分求高度场的切向斜率，得到“水面法线”（用于高光 + 轻微折射）。
+    // 有限差分求高度场的切向斜率，作为折射位移方向的自然调制来源。
     const float eps = 1.0;
     float waveNext = tms_waterHeight(tCoord + eps, time, waveAmplitude, waveFrequency, waveSpeed);
     float slope = (waveNext - wave) / eps;
-    float2 normal = normalize(t * (-slope) - g);
 
-    // --- 轻微噪声域扭曲：强度刻意压得很小，只是让水下内容有一点点
-    //     “隔着水看”的浮动感，不是强烈的紊乱形变。 ---
+    // --- 极轻微的噪声抖动：只是让水下位移不是死板的纯几何值，带一点
+    //     “活的”液体感，幅度远小于主位移，不是折射的主要来源。 ---
     float2 flowP = position * 0.006 + float2(time * 0.05, -time * 0.03);
     float n1 = tms_noise(flowP) - 0.5;
     float n2 = tms_noise(flowP + float2(5.2, 1.3)) - 0.5;
-    float2 warp = float2(n1, n2) * 3.0;
+    float2 warp = float2(n1, n2) * 0.4;
 
-    // 折射/色散强度随离水面距离指数衰减：贴近水面（depth 小）时接近 1，
-    // 越往深处越接近 0——只有靠近水面才能看清被扭曲、带彩边的画面，
-    // 深处基本看不透，这也是真实水下光学的样子。
-    float nearSurface = exp(-max(depth, 0.0) / max(refractionRange, 1.0));
-    float2 disp = (t * slope * 0.5 + warp) * refractionStrength * nearSurface;
+    // 折射位移 ramp：跨过水位线后，在一条窄条（宽度由 refractionRange
+    // 控制）内快速从 0 过渡到 1，过渡完之后保持恒定的 1——不随深度继续
+    // 衰减。这是复刻“筷子插入水里看起来断开错位”的关键：水下内容整体
+    // 沿切向产生一段【恒定】的侧向位移，不是越往下越模糊、也不是被
+    // 水面本身很小的坡度拖累到几乎看不见——固定方向的位移量直接取
+    // refractionStrength 本身，slope 只用来叠加一点跟随水面起伏的自然
+    // 变化（用 clamp 限制在 ±60% 范围内，不会让位移消失或反向太多）。
+    float rampWidth = max(refractionRange, 1.0);
+    float ramp = smoothstep(-rampWidth, rampWidth, depth);
+    float slopeMod = clamp(slope * 6.0, -0.6, 0.6);
+    float2 disp = (t * (1.0 + slopeMod) + warp) * refractionStrength * ramp;
 
     // --- 原始图层采样：既判断“容器形状”，也用作空气侧内容 ---
     half4 airSample = layer.sample(position);
@@ -145,17 +166,26 @@ static inline float tms_waterHeight(float tCoord,
     float shapeAA = fwidth(float(airSample.a)) + 0.0006;
     float shapeMask = smoothstep(0.0002 - shapeAA, 0.0002 + shapeAA, float(airSample.a));
 
-    // --- 水侧：轻微扭曲后的折射采样，R/G/B 用略有差异的位移量分别采样
-    //     做色散（chromatic aberration），色散幅度也随 nearSurface 衰减，
-    //     只在贴近水面处出现彩边。 ---
-    float chroma = chromaSpread * nearSurface;
-    half4 sr = layer.sample(position + disp * (1.0 + chroma));
-    half4 sg = layer.sample(position + disp);
-    half4 sb = layer.sample(position + disp * (1.0 - chroma));
-    half3 waterStraight;
-    waterStraight.r = sr.a > 0.001h ? half(sr.r / sr.a) : 0.0h;
-    waterStraight.g = sg.a > 0.001h ? half(sg.g / sg.a) : 0.0h;
-    waterStraight.b = sb.a > 0.001h ? half(sb.b / sb.a) : 0.0h;
+    // --- 水侧：折射采样，R/G/B 用略有差异的位移量分别采样做色散
+    //     （chromatic aberration），色散幅度跟随同一条 ramp——跨过水位
+    //     线后就保持恒定，不随深度继续衰减。每个通道额外用 4 个小幅
+    //     抖动的偏移点取平均做模糊（chromaSoftness 控制抖动半径），
+    //     这样色散是柔和的光晕，不会在下层内容的锐利边缘处产生锐利的
+    //     红蓝描边——这是复刻棱镜色散“柔光”质感而不是“描边”质感的关键。 ---
+    float chroma = chromaSpread * ramp;
+    float2 blurA = float2(chromaSoftness, chromaSoftness * 0.4);
+    float2 blurB = float2(-chromaSoftness * 0.3, chromaSoftness);
+    half3 waterStraight = half3(0.0h);
+    for (int k = 0; k < 4; k++) {
+        float2 jitter = (k == 0) ? blurA : (k == 1) ? -blurA : (k == 2) ? blurB : -blurB;
+        half4 sr = layer.sample(position + disp * (1.0 + chroma) + jitter);
+        half4 sg = layer.sample(position + disp + jitter);
+        half4 sb = layer.sample(position + disp * (1.0 - chroma) + jitter);
+        waterStraight.r += sr.a > 0.001h ? half(sr.r / sr.a) : 0.0h;
+        waterStraight.g += sg.a > 0.001h ? half(sg.g / sg.a) : 0.0h;
+        waterStraight.b += sb.a > 0.001h ? half(sb.b / sb.a) : 0.0h;
+    }
+    waterStraight *= 0.25h;
 
     // 水色：贴近水面时只叠很淡的一层（这样被折射/色散的下层内容清晰
     // 可见），随深度增加逐渐叠浓，够深处基本被水色盖住看不透。
@@ -163,19 +193,31 @@ static inline float tms_waterHeight(float tCoord,
     half3 body = mix(waterStraight, tintColor.rgb, tintMix);
     body *= half(1.0 - depthFrac * 0.20);
 
-    // --- 表面渐变高光：贴着水面一条柔和的亮带，随深度快速衰减，
-    //     法线越贴合固定光方向越亮，模拟水面附近淡淡的反光渐变
-    //     （不是花纹、不是描边，只是一层柔和的亮度渐变）。
-    float2 lightDir = normalize(float2(-0.3, -0.95));
-    float surfaceBand = exp(-max(depth, 0.0) / max(extent * 0.18, 8.0));
-    float spec = (dot(normal, -lightDir) * 0.5 + 0.5);
-    body += half3(surfaceBand * spec * highlightIntensity) * half3(highlightColor.rgb);
+    // --- 内发光（inner glow）：紧贴水位线水下一侧的一条均匀辉光带。
+    //     只用 |depth|（离水位线的距离）驱动指数衰减，不依赖 normal /
+    //     光照方向——这样辉光沿整条曲线亮度均匀，不会因坡度朝向不同
+    //     而忽明忽暗，符合“边界自身在发光”的观感。只在水下一侧出现
+    //     （depth > 0 时才有），空气侧没有。 ---
+    float glowBand = exp(-max(depth, 0.0) / max(highlightRange, 1.0));
+    body += half3(glowBand * highlightIntensity) * half3(highlightColor.rgb);
+
+    // --- 棱镜辉光（prism glow）：真正让色散“看起来像色散”的部分——
+    //     不是对下层内容做位移采样，而是独立叠加一层连续的彩虹色相
+    //     渐变光晕，强度用高斯状函数随 |depth| 衰减（`prismGlowRange`
+    //     控制衰减范围），色相沿切向 + 时间缓慢漂移。因为完全不依赖
+    //     下层内容的对比度，无论下层是纯色还是锐利边缘，呈现出来的都
+    //     是柔和发光的彩虹光晕，而不是描边。 ---
+    float glowDist = depth / max(prismGlowRange, 1.0);
+    float prismFalloff = exp(-glowDist * glowDist);
+    float prismHue = fract(tCoord * 0.0015 - time * 0.05);
+    half3 prismColor = tms_prismRainbow(prismHue);
+    body += prismColor * half(prismFalloff * prismGlowIntensity);
 
     body = clamp(body, 0.0h, 1.0h);
 
-    // --- 水/空气的柔和过渡：用较宽的 softness 做模糊边界（而不是锐利
-    //     的 1px 抗锯齿），呈现“隔着雾面玻璃看水”的柔和感。 ---
-    float blend = max(softness, 0.5) + fwidth(depth);
+    // --- 水/空气的边界：锐利过渡，只用 fwidth 做 ~1px 抗锯齿（softness
+    //     可以叠加极轻微的额外柔化，默认应保持很小）。 ---
+    float blend = max(softness, 0.0) + fwidth(depth) + 0.5;
     half underwater = half(smoothstep(-blend, blend, depth));
     half3 result = mix(airStraight, body, underwater);
 

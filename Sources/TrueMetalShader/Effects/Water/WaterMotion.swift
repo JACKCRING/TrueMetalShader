@@ -119,24 +119,32 @@ public struct WaterGravityEffect: ViewModifier {
     public var refractionStrength: CGFloat
     public var refractionRange: CGFloat
     public var chromaSpread: Float
+    public var chromaSoftness: CGFloat
+    public var prismGlowIntensity: Float
+    public var prismGlowRange: CGFloat
     public var tint: Color
     public var highlightColor: Color
     public var softness: CGFloat
     public var bodyOpacity: Double
     public var highlightIntensity: Float
+    public var highlightRange: CGFloat
 
     public init(level: CGFloat = 0.5,
                 waveAmplitude: CGFloat = 3,
                 waveFrequency: Float = 4,
                 waveSpeed: Float = 1.0,
-                refractionStrength: CGFloat = 22,
-                refractionRange: CGFloat = 60,
-                chromaSpread: Float = 0.6,
+                refractionStrength: CGFloat = 18,
+                refractionRange: CGFloat = 4,
+                chromaSpread: Float = 0.15,
+                chromaSoftness: CGFloat = 3,
+                prismGlowIntensity: Float = 0.55,
+                prismGlowRange: CGFloat = 16,
                 tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
-                highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
-                softness: CGFloat = 6,
+                highlightColor: Color = .white,
+                softness: CGFloat = 0,
                 bodyOpacity: Double = 0.7,
-                highlightIntensity: Float = 0.35,
+                highlightIntensity: Float = 0.9,
+                highlightRange: CGFloat = 14,
                 stiffness: CGFloat = 90,
                 damping: CGFloat = 9) {
         self.level = level
@@ -146,11 +154,15 @@ public struct WaterGravityEffect: ViewModifier {
         self.refractionStrength = refractionStrength
         self.refractionRange = refractionRange
         self.chromaSpread = chromaSpread
+        self.chromaSoftness = chromaSoftness
+        self.prismGlowIntensity = prismGlowIntensity
+        self.prismGlowRange = prismGlowRange
         self.tint = tint
         self.highlightColor = highlightColor
         self.softness = softness
         self.bodyOpacity = bodyOpacity
         self.highlightIntensity = highlightIntensity
+        self.highlightRange = highlightRange
         _source = StateObject(wrappedValue: WaterGravitySource(stiffness: stiffness, damping: damping))
     }
 
@@ -164,11 +176,15 @@ public struct WaterGravityEffect: ViewModifier {
                         refractionStrength: refractionStrength,
                         refractionRange: refractionRange,
                         chromaSpread: chromaSpread,
+                        chromaSoftness: chromaSoftness,
+                        prismGlowIntensity: prismGlowIntensity,
+                        prismGlowRange: prismGlowRange,
                         tint: tint,
                         highlightColor: highlightColor,
                         softness: softness,
                         bodyOpacity: bodyOpacity,
-                        highlightIntensity: highlightIntensity)
+                        highlightIntensity: highlightIntensity,
+                        highlightRange: highlightRange)
             .onAppear { source.start() }
             .onDisappear { source.stop() }
     }
@@ -185,29 +201,38 @@ public extension View {
     ///   - level: 水位 0...1，0 = 空杯，1 = 满杯。默认 0.5。
     ///   - waveAmplitude: 水面起伏幅度（像素），保持较小。默认 3。
     ///   - waveFrequency: 起伏密度。默认 4。
-    ///   - waveSpeed: 起伏 / 高光流动速度。默认 1.0。
-    ///   - refractionStrength: 折射强度（贴近水面处的最大值）。默认 22。
-    ///   - refractionRange: 折射 + 色散强度衰减到接近 0 的距离（像素）。默认 60。
-    ///   - chromaSpread: 色散强度 0...1，越大彩边越明显。默认 0.6。
+    ///   - waveSpeed: 起伏流动速度。默认 1.0。
+    ///   - refractionStrength: 折射强度（像素），跨过水位线后的恒定侧移
+    ///     距离。默认 18。
+    ///   - refractionRange: 位移从 0 过渡到恒定值的窄条宽度（像素）。默认 4。
+    ///   - chromaSpread: 通道位移色散强度 0...1，保持较小。默认 0.15。
+    ///   - chromaSoftness: 色散采样模糊半径（像素）。默认 3。
+    ///   - prismGlowIntensity: 棱镜辉光强度（真正的彩虹光晕来源）。默认 0.55。
+    ///   - prismGlowRange: 棱镜辉光衰减范围（像素）。默认 16。
     ///   - tint: 水色。默认深青蓝。
-    ///   - highlightColor: 表面渐变高光颜色。默认浅青白。
-    ///   - softness: 水/空气边界柔和过渡宽度（像素）。默认 6。
+    ///   - highlightColor: 内发光颜色。默认白。
+    ///   - softness: 边界额外柔化余量（像素），保持很小以呈现锐利边缘。默认 0。
     ///   - bodyOpacity: 水体不透明度 0...1，独立于容器透明度。默认 0.7。
-    ///   - highlightIntensity: 表面渐变高光强度。默认 0.35。
+    ///   - highlightIntensity: 内发光强度。默认 0.9。
+    ///   - highlightRange: 内发光衰减范围（像素）。默认 14。
     ///   - stiffness: 晃动弹簧刚度，越大追赶越快。默认 90。
     ///   - damping: 晃动弹簧阻尼，越小越晃、越大越快稳定。默认 9。
     func waterGravityEffect(level: CGFloat = 0.5,
                             waveAmplitude: CGFloat = 3,
                             waveFrequency: Float = 4,
                             waveSpeed: Float = 1.0,
-                            refractionStrength: CGFloat = 22,
-                            refractionRange: CGFloat = 60,
-                            chromaSpread: Float = 0.6,
+                            refractionStrength: CGFloat = 18,
+                            refractionRange: CGFloat = 4,
+                            chromaSpread: Float = 0.15,
+                            chromaSoftness: CGFloat = 3,
+                            prismGlowIntensity: Float = 0.55,
+                            prismGlowRange: CGFloat = 16,
                             tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
-                            highlightColor: Color = Color(red: 0.75, green: 0.92, blue: 1.0),
-                            softness: CGFloat = 6,
+                            highlightColor: Color = .white,
+                            softness: CGFloat = 0,
                             bodyOpacity: Double = 0.7,
-                            highlightIntensity: Float = 0.35,
+                            highlightIntensity: Float = 0.9,
+                            highlightRange: CGFloat = 14,
                             stiffness: CGFloat = 90,
                             damping: CGFloat = 9) -> some View {
         modifier(WaterGravityEffect(level: level,
@@ -217,11 +242,15 @@ public extension View {
                                     refractionStrength: refractionStrength,
                                     refractionRange: refractionRange,
                                     chromaSpread: chromaSpread,
+                                    chromaSoftness: chromaSoftness,
+                                    prismGlowIntensity: prismGlowIntensity,
+                                    prismGlowRange: prismGlowRange,
                                     tint: tint,
                                     highlightColor: highlightColor,
                                     softness: softness,
                                     bodyOpacity: bodyOpacity,
                                     highlightIntensity: highlightIntensity,
+                                    highlightRange: highlightRange,
                                     stiffness: stiffness,
                                     damping: damping))
     }
