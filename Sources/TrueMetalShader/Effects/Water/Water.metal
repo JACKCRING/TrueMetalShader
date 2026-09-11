@@ -17,11 +17,6 @@
 //    后，内容整体沿一个固定方向产生一段【恒定】的侧向位移（不随深度
 //    衰减），只在贴着水位线的窄条内快速从 0 过渡到满值——视觉上就是
 //    “东西一插进水里，水下的部分整体挪了一截”，而不是越往下越模糊；
-//  - 色散：不是锐利的红蓝描边，而是棱镜色散那种柔和光晕——每个 R/G/B
-//    通道用小幅抖动的多次采样取平均做模糊（避免对下层内容锐利边缘产生
-//    锐利彩边），再叠加一层独立的柔和彩虹辉光（`prismGlow` 系列参数，
-//    纯粹基于离水位线的距离算色相渐变 + 高斯衰减，不依赖下层内容的
-//    对比度），这样才是“发光”而不是“描边”的质感；
 //  - 内发光（inner glow）：紧贴水位线的水下一侧，有一条均匀的辉光带，
 //    强度只随“离水位线的距离”指数衰减（`highlightRange` 控制衰减范围），
 //    与局部法线朝向无关——这样辉光沿整条曲线均匀浮现，不会因为坡度朝向
@@ -63,13 +58,6 @@ static inline float tms_noise(float2 p) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// 便宜的彩虹调色板（余弦渐变，Inigo Quilez 风格）。t 在 0...1 循环一圈
-// 色相，用于水位线附近的柔和棱镜辉光（不是通道位移描边）。
-static inline half3 tms_prismRainbow(float t) {
-    float3 c = 0.5 + 0.5 * cos(6.28318530718 * (float3(0.00, 0.33, 0.67) + t));
-    return half3(c);
-}
-
 // 水位线边界高度场：只负责“轮廓形状”，必须是一条平滑、近乎直的曲线——
 // 单一低频正弦（一整个视图宽度大约看到不到一个完整波峰）+ 极轻微的
 // 低频噪声，两者振幅都很小，避免出现多个尖峰。tCoord 是沿切向的坐标，
@@ -99,12 +87,8 @@ static inline float tms_waterHeight(float tCoord,
                                float softness,
                                float bodyOpacity,
                                float highlightIntensity,
-                               float chromaSpread,
                                float refractionRange,
-                               float highlightRange,
-                               float chromaSoftness,
-                               float prismGlowIntensity,
-                               float prismGlowRange) {
+                               float highlightRange) {
     // 重力方向（“下”），退化时兜底为正下方，避免除零。
     float2 g = length(gravity) > 0.0001 ? normalize(gravity) : float2(0.0, 1.0);
     // 切向：与重力垂直，水位线沿这个方向延展。
@@ -166,26 +150,9 @@ static inline float tms_waterHeight(float tCoord,
     float shapeAA = fwidth(float(airSample.a)) + 0.0006;
     float shapeMask = smoothstep(0.0002 - shapeAA, 0.0002 + shapeAA, float(airSample.a));
 
-    // --- 水侧：折射采样，R/G/B 用略有差异的位移量分别采样做色散
-    //     （chromatic aberration），色散幅度跟随同一条 ramp——跨过水位
-    //     线后就保持恒定，不随深度继续衰减。每个通道额外用 4 个小幅
-    //     抖动的偏移点取平均做模糊（chromaSoftness 控制抖动半径），
-    //     这样色散是柔和的光晕，不会在下层内容的锐利边缘处产生锐利的
-    //     红蓝描边——这是复刻棱镜色散“柔光”质感而不是“描边”质感的关键。 ---
-    float chroma = chromaSpread * ramp;
-    float2 blurA = float2(chromaSoftness, chromaSoftness * 0.4);
-    float2 blurB = float2(-chromaSoftness * 0.3, chromaSoftness);
-    half3 waterStraight = half3(0.0h);
-    for (int k = 0; k < 4; k++) {
-        float2 jitter = (k == 0) ? blurA : (k == 1) ? -blurA : (k == 2) ? blurB : -blurB;
-        half4 sr = layer.sample(position + disp * (1.0 + chroma) + jitter);
-        half4 sg = layer.sample(position + disp + jitter);
-        half4 sb = layer.sample(position + disp * (1.0 - chroma) + jitter);
-        waterStraight.r += sr.a > 0.001h ? half(sr.r / sr.a) : 0.0h;
-        waterStraight.g += sg.a > 0.001h ? half(sg.g / sg.a) : 0.0h;
-        waterStraight.b += sb.a > 0.001h ? half(sb.b / sb.a) : 0.0h;
-    }
-    waterStraight *= 0.25h;
+    // --- 水侧：折射采样，单点采样、无色散——干净的位移错位效果。 ---
+    half4 waterSample = layer.sample(position + disp);
+    half3 waterStraight = waterSample.a > 0.001h ? half3(waterSample.rgb / waterSample.a) : half3(0.0h);
 
     // 水色：贴近水面时只叠很淡的一层（这样被折射/色散的下层内容清晰
     // 可见），随深度增加逐渐叠浓，够深处基本被水色盖住看不透。
@@ -200,18 +167,6 @@ static inline float tms_waterHeight(float tCoord,
     //     （depth > 0 时才有），空气侧没有。 ---
     float glowBand = exp(-max(depth, 0.0) / max(highlightRange, 1.0));
     body += half3(glowBand * highlightIntensity) * half3(highlightColor.rgb);
-
-    // --- 棱镜辉光（prism glow）：真正让色散“看起来像色散”的部分——
-    //     不是对下层内容做位移采样，而是独立叠加一层连续的彩虹色相
-    //     渐变光晕，强度用高斯状函数随 |depth| 衰减（`prismGlowRange`
-    //     控制衰减范围），色相沿切向 + 时间缓慢漂移。因为完全不依赖
-    //     下层内容的对比度，无论下层是纯色还是锐利边缘，呈现出来的都
-    //     是柔和发光的彩虹光晕，而不是描边。 ---
-    float glowDist = depth / max(prismGlowRange, 1.0);
-    float prismFalloff = exp(-glowDist * glowDist);
-    float prismHue = fract(tCoord * 0.0015 - time * 0.05);
-    half3 prismColor = tms_prismRainbow(prismHue);
-    body += prismColor * half(prismFalloff * prismGlowIntensity);
 
     body = clamp(body, 0.0h, 1.0h);
 

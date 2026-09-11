@@ -8,11 +8,11 @@
 //  （随重力倾斜），只有很轻微的低频起伏，边缘是锐利的（只做 1px 抗
 //  锯齿，不是模糊的雾面过渡）。折射效果是经典的“插入水里的筷子看起来
 //  断开错位”——跨过水位线后，内容整体沿切向产生一段【恒定】的侧向
-//  位移（`refractionRange` 只控制从 0 过渡到恒定值的窄条宽度），色散
-//  同理。紧贴水位线水下一侧有一条内发光（inner glow），亮度只随离
-//  水位线的距离衰减、与坡度朝向无关，所以整条曲线上的辉光是均匀的。
-//  刻意不做夸张的波浪 / 高频花纹——那样会显得像连绵的山峰，不像真实
-//  水面。
+//  位移（`refractionRange` 只控制从 0 过渡到恒定值的窄条宽度）。紧贴
+//  水位线水下一侧有一条内发光（inner glow），亮度只随离水位线的距离
+//  衰减、与坡度朝向无关，所以整条曲线上的辉光是均匀的。刻意不做夸张
+//  的波浪 / 高频花纹、也不做色散——那样会显得像连绵的山峰或彩虹描边，
+//  不像真实水面。
 //
 //  套在【任意视图】上即可，那个视图就是“容器”：
 //
@@ -68,26 +68,6 @@ public struct WaterEffect: ViewModifier {
     /// 过渡完之后一直保持恒定）。越小这道错位越像硬边缘，越大越柔和。
     public var refractionRange: CGFloat
 
-    /// 色散（chromatic aberration）强度 0...1：R/G/B 通道采样位移量的
-    /// 差异幅度。同样是跨过水位线后的恒定值。这个值只影响“基于下层
-    /// 内容位移采样”那部分色散，配合 `chromaSoftness` 做柔化，视觉上
-    /// 应该保持较小（默认 0.15）——真正明显的彩虹光晕来自 `prismGlow*`
-    /// 系列参数（独立叠加，不依赖下层内容）。
-    public var chromaSpread: Float
-
-    /// 色散采样的模糊半径（像素）：每个颜色通道额外用小幅抖动的多次
-    /// 采样取平均，把色散从“锐利描边”变成“柔和光晕”，越大越柔和。
-    public var chromaSoftness: CGFloat
-
-    /// 棱镜辉光（prism glow）强度：独立叠加在水位线附近的彩虹光晕，
-    /// 不依赖下层内容的对比度——这是让色散“看起来像色散”而不是“像
-    /// 描边”的主要来源，参考真实棱镜色散的柔光质感。
-    public var prismGlowIntensity: Float
-
-    /// 棱镜辉光的衰减范围（像素）：离水位线这个距离后光晕基本消失，
-    /// 越大光晕带越厚越柔和。
-    public var prismGlowRange: CGFloat
-
     /// 水色（水下叠加的颜色）。
     public var tint: Color
 
@@ -119,10 +99,6 @@ public struct WaterEffect: ViewModifier {
                 waveSpeed: Float = 1.0,
                 refractionStrength: CGFloat = 18,
                 refractionRange: CGFloat = 4,
-                chromaSpread: Float = 0.15,
-                chromaSoftness: CGFloat = 3,
-                prismGlowIntensity: Float = 0.55,
-                prismGlowRange: CGFloat = 16,
                 tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                 highlightColor: Color = .white,
                 softness: CGFloat = 0,
@@ -137,10 +113,6 @@ public struct WaterEffect: ViewModifier {
         self.waveSpeed = waveSpeed
         self.refractionStrength = refractionStrength
         self.refractionRange = refractionRange
-        self.chromaSpread = chromaSpread
-        self.chromaSoftness = chromaSoftness
-        self.prismGlowIntensity = prismGlowIntensity
-        self.prismGlowRange = prismGlowRange
         self.tint = tint
         self.highlightColor = highlightColor
         self.softness = softness
@@ -151,12 +123,9 @@ public struct WaterEffect: ViewModifier {
     }
 
     /// 折射最远采样距离：恒定位移量 refractionStrength（含 slope 调制
-    /// 最多 ±60%，噪声抖动幅度很小），乘以色散展开的最大倍数
-    /// （1 + chromaSpread），再加上 chromaSoftness 的抖动半径和 softness
-    /// 留出的柔化边余量。
+    /// 最多 ±60%，噪声抖动幅度很小），再加上 softness 留出的柔化边余量。
     private var maxSampleOffset: CGSize {
-        let reach = refractionStrength * 1.6 * CGFloat(1 + max(0, chromaSpread))
-                  + chromaSoftness + softness + CGFloat(4)
+        let reach = refractionStrength * 1.6 + softness + CGFloat(4)
         return CGSize(width: reach, height: reach)
     }
 
@@ -184,12 +153,8 @@ public struct WaterEffect: ViewModifier {
                         .float(Float(softness)),
                         .float(Float(bodyOpacity)),
                         .float(highlightIntensity),
-                        .float(chromaSpread),
                         .float(Float(refractionRange)),
-                        .float(Float(highlightRange)),
-                        .float(Float(chromaSoftness)),
-                        .float(prismGlowIntensity),
-                        .float(Float(prismGlowRange))
+                        .float(Float(highlightRange))
                     ),
                     maxSampleOffset: maxSampleOffset
                 )
@@ -204,9 +169,9 @@ public struct WaterEffect: ViewModifier {
 public extension View {
     /// 给任意视图套上“透明容器里的水”效果：水位线随重力倾斜（近乎平滑
     /// 直线），只有很轻微的低频起伏，边缘锐利；跨过水位线后内容整体
-    /// 产生一段恒定的折射侧移 + 色散，紧贴水位线水下一侧有一条均匀的
-    /// 内发光。水的不透明度独立于容器本身透明度，因此即便容器画得很
-    /// 淡，水依然清晰可见。
+    /// 产生一段恒定的折射侧移，紧贴水位线水下一侧有一条均匀的内发光。
+    /// 水的不透明度独立于容器本身透明度，因此即便容器画得很淡，水依然
+    /// 清晰可见。
     ///
     /// - Parameters:
     ///   - gravity: 重力 / “下”方向，(0,1) 为竖直向下（水面持平）。默认 (0, 1)。
@@ -218,12 +183,6 @@ public extension View {
     ///     距离。默认 18。
     ///   - refractionRange: 位移从 0 过渡到恒定值的窄条宽度（像素），
     ///     越小这道错位越像硬边缘。默认 4。
-    ///   - chromaSpread: 通道位移色散强度 0...1，保持较小（配合
-    ///     chromaSoftness 柔化）。默认 0.15。
-    ///   - chromaSoftness: 色散采样模糊半径（像素），把色散变柔和。默认 3。
-    ///   - prismGlowIntensity: 棱镜辉光强度（独立于下层内容的彩虹光晕，
-    ///     真正的“色散像色散”的来源）。默认 0.55。
-    ///   - prismGlowRange: 棱镜辉光衰减范围（像素）。默认 16。
     ///   - tint: 水色。默认深青蓝。
     ///   - highlightColor: 内发光颜色。默认白。
     ///   - softness: 边界额外柔化余量（像素），保持很小以呈现锐利边缘。默认 0。
@@ -238,10 +197,6 @@ public extension View {
                      waveSpeed: Float = 1.0,
                      refractionStrength: CGFloat = 18,
                      refractionRange: CGFloat = 4,
-                     chromaSpread: Float = 0.15,
-                     chromaSoftness: CGFloat = 3,
-                     prismGlowIntensity: Float = 0.55,
-                     prismGlowRange: CGFloat = 16,
                      tint: Color = Color(red: 0.05, green: 0.35, blue: 0.55),
                      highlightColor: Color = .white,
                      softness: CGFloat = 0,
@@ -256,10 +211,6 @@ public extension View {
                               waveSpeed: waveSpeed,
                               refractionStrength: refractionStrength,
                               refractionRange: refractionRange,
-                              chromaSpread: chromaSpread,
-                              chromaSoftness: chromaSoftness,
-                              prismGlowIntensity: prismGlowIntensity,
-                              prismGlowRange: prismGlowRange,
                               tint: tint,
                               highlightColor: highlightColor,
                               softness: softness,
@@ -272,7 +223,7 @@ public extension View {
 
 // MARK: - 预览辅助
 
-/// 一个有明显纹理的网格背景（类似瓷砖），专门用来让折射/色散效果“看得出来”——
+/// 一个有明显纹理的网格背景（类似瓷砖），专门用来让折射效果“看得出来”——
 /// 纯色背景被扭曲后还是纯色，肉眼分辨不出位移，必须要有规则纹理做参照物。
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
 private struct TiledPreviewBackground: View {
@@ -300,7 +251,7 @@ private struct TiledPreviewBackground: View {
 // MARK: - 预览
 
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
-#Preview("水面 · 折射瓷砖背景（能明显看出扭曲/色散）") {
+#Preview("水面 · 折射瓷砖背景（能明显看出扭曲）") {
     TiledPreviewBackground()
         .frame(width: 320, height: 420)
         .waterEffect(gravity: CGVector(dx: 0.3, dy: 1), level: 0.7)
@@ -340,13 +291,12 @@ private struct TiledPreviewBackground: View {
     .frame(width: 320, height: 420)
     .waterEffect(gravity: CGVector(dx: 0.35, dy: 1),
                 level: 0.75,
-                refractionStrength: 24,
-                chromaSpread: 0.6)
+                refractionStrength: 24)
     .background(.black)
 }
 
 @available(iOS 17.0, macOS 14.0, tvOS 17.0, visionOS 1.0, *)
-#Preview("水面 · 插入水中的矩形（错位折射 + 内发光 + 柔和棱镜色散）") {
+#Preview("水面 · 插入水中的矩形（错位折射 + 内发光）") {
     ZStack {
         Color(red: 0.72, green: 0.85, blue: 0.90)
         RoundedRectangle(cornerRadius: 4)
@@ -360,10 +310,6 @@ private struct TiledPreviewBackground: View {
                 waveAmplitude: 14,
                 waveFrequency: 3,
                 refractionStrength: 26,
-                chromaSpread: 0.1,
-                chromaSoftness: 4,
-                prismGlowIntensity: 0.6,
-                prismGlowRange: 18,
                 tint: Color(red: 0.72, green: 0.90, blue: 0.95).opacity(0.35),
                 bodyOpacity: 0.5,
                 highlightIntensity: 1.0,
